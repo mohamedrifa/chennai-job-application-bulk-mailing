@@ -9,6 +9,7 @@ exports.sendBulkMail = async (req, res) => {
   try {
     const { subject, message, userMail, userPass } = req.body;
     const files = req.files;
+    console.log(req.body);
 
     if (!emails || !subject || !message || !userMail || !userPass) {
       return res.status(400).json({ error: "Missing fields" });
