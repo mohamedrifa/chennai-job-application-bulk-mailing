@@ -9,28 +9,36 @@ exports.sendBulkMail = async (req, res) => {
   try {
     const { subject, message, userMail, userPass } = req.body;
     const files = req.files;
-    console.log(req.body);
 
     if (!emails || !subject || !message || !userMail || !userPass) {
       return res.status(400).json({ error: "Missing fields" });
     }
 
+    const attachments = files
+      ? files.map(f => ({ filename: f.originalname, path: f.path }))
+      : [];
+
+    // 🔥 IMMEDIATE RESPONSE
+    res.json({
+      success: true,
+      message: "Bulk mail job started. Emails are being sent in the background.",
+      totalEmails: emails.length,
+    });
+
+    // === ASYNCHRONOUS EMAIL PROCESSING ===
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: { user: userMail, pass: userPass },
     });
 
-    const attachments = files
-      ? files.map(f => ({ filename: f.originalname, path: f.path }))
-      : [];
-
     let instantSuccess = 0;
     let instantFail = 0;
 
-    // 🔥 SEND FIRST 500 INSTANTLY
+    // Send first 500 instantly
     const firstBatch = emails.slice(0, DAILY_LIMIT);
     const remaining = emails.slice(DAILY_LIMIT);
 
+    // Process first batch
     for (const to of firstBatch) {
       try {
         await transporter.sendMail({
@@ -41,12 +49,15 @@ exports.sendBulkMail = async (req, res) => {
           attachments,
         });
         instantSuccess++;
-      } catch {
+      } catch (err) {
         instantFail++;
+        console.error("Failed to send:", to, err.message);
       }
     }
 
-    // 🕒 STORE REMAINING IN DB QUEUE
+    console.log(`Instantly sent: ${instantSuccess}, failed: ${instantFail}`);
+
+    // Queue remaining emails in DB
     const queueData = remaining.map(to => ({
       to,
       subject,
@@ -60,21 +71,15 @@ exports.sendBulkMail = async (req, res) => {
 
     if (queueData.length) {
       await MailQueue.insertMany(queueData);
+      console.log(`Queued ${queueData.length} emails`);
     }
 
-    // delete temp files
-    if (files) files.forEach(f => fs.unlinkSync(f.path));
-
-    return res.json({
-      success: true,
-      message: "Bulk mail started",
-      sentNow: instantSuccess,
-      failedNow: instantFail,
-      queued: queueData.length,
-    });
+    // Delete temp files
+    if (files) {
+      files.forEach(f => fs.unlink(f.path, err => err && console.error(err)));
+    }
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Bulk mail failed" });
+    console.error("Bulk mail failed:", err);
   }
 };
