@@ -1,6 +1,9 @@
 const nodemailer = require("nodemailer");
 const fs = require("fs");
 const MailQueue = require("../models/mailQueue");
+const Settings = require("../models/settings");
+const { scheduleNextForUser } = require("../jobs/dailyMailer");
+
 
 const DAILY_LIMIT = 500;
 
@@ -57,6 +60,18 @@ exports.sendBulkMail = async (req, res) => {
     }));
 
     console.log(`Instantly sent: ${instantSuccess}, failed: ${instantFail}`);
+
+    let settings = await Settings.findOne({ userMail });
+
+    if (!settings) {
+      await Settings.create({ userMail, lastRun: new Date() });
+    } else {
+      settings.lastRun = new Date();
+      await settings.save();
+    }
+    // start cron for this user immediately
+    scheduleNextForUser(userMail);
+
 
     // Queue remaining emails in DB
     if (remaining.length) {

@@ -1,30 +1,45 @@
 const cron = require("node-cron");
 const nodemailer = require("nodemailer");
 const MailQueue = require("../models/mailQueue");
+const Settings = require("../models/settings");
 
 const DAILY_LIMIT = 500;
 
-// Run every day at 10 AM
-cron.schedule("0 10 * * *", async () => {
-  console.log("📨 Daily bulk mail started");
+const userTasks = new Map();
 
-  // Get all distinct users who have pending mails
-  const users = await MailQueue.distinct("userMail", { status: "pending" });
+async function scheduleNextForUser(userMail) {
 
-  for (const userMail of users) {
-    // Get pending mails for this user
-    const pendingMails = await MailQueue.find({ userMail, status: "pending" }).limit(DAILY_LIMIT);
+  // 🛑 stop old cron for this user
+  if (userTasks.has(userMail)) {
+    userTasks.get(userMail).stop();
+  }
 
-    if (!pendingMails.length) continue;
+  let data = await Settings.findOne({ userMail });
+  if (!data) return;
 
-    const userPass = pendingMails[0].userPass; // assume same userPass for same user
+  const lastRun = new Date(data.lastRun);
+  const next = new Date(lastRun.getTime() + 25.5 * 60 * 60 * 1000);
+
+  const min = next.getMinutes();
+  const hr = next.getHours();
+  const cronExp = `${min} ${hr} * * *`;
+
+  console.log(`⏰ Next run for ${userMail}:`, cronExp);
+
+  const task = cron.schedule(cronExp, async () => {
+    console.log(`📨 Running for ${userMail}`);
+
+    const pendingMails = await MailQueue
+      .find({ userMail, status: "pending" })
+      .limit(DAILY_LIMIT);
+
+    if (!pendingMails.length) return;
+
+    const userPass = pendingMails[0].userPass;
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: { user: userMail, pass: userPass },
     });
-
-    let successCount = 0;
-    let failCount = 0;
 
     for (const mail of pendingMails) {
       try {
@@ -38,40 +53,30 @@ cron.schedule("0 10 * * *", async () => {
 
         mail.status = "sent";
         mail.sentAt = new Date();
-        successCount++;
       } catch (err) {
         mail.retries++;
         mail.status = mail.retries >= 3 ? "failed" : "pending";
-        failCount++;
-        console.error("Failed to send:", mail.to, err.message);
       }
 
       await mail.save();
     }
 
-    // Send report to this user
-    const totalSent = await MailQueue.countDocuments({ userMail, status: "sent" });
-    const pending = await MailQueue.countDocuments({ userMail, status: "pending" });
-    const failed = await MailQueue.countDocuments({ userMail, status: "failed" });
+    await Settings.updateOne(
+      { userMail },
+      { lastRun: new Date() }
+    );
 
-    await transporter.sendMail({
-      from: userMail,
-      to: userMail,
-      subject: "📊 Your Bulk Mail Daily Report",
-      html: `
-        <h2>Daily Bulk Mail Report</h2>
-        <p><b>Sent Today:</b> ${successCount}</p>
-        <p><b>Failed Today:</b> ${failCount}</p>
-        <hr/>
-        <p><b>Total Sent:</b> ${totalSent}</p>
-        <p><b>Pending:</b> ${pending}</p>
-        <p><b>Failed Overall:</b> ${failed}</p>
-        <p><b>Time:</b> ${new Date().toLocaleString()}</p>
-      `,
-    });
+    scheduleNextForUser(userMail); // shift again
+  });
 
-    console.log(`📧 Report sent to ${userMail} | Sent: ${successCount}, Failed: ${failCount}`);
-  }
+  // ✅ save task reference
+  userTasks.set(userMail, task);
+}
 
-  console.log("📨 Daily bulk mail finished");
-});
+async function startAllCrons() {
+  const users = await Settings.find({});
+  users.forEach(u => scheduleNextForUser(u.userMail));
+}
+
+startAllCrons();
+module.exports = { scheduleNextForUser };
