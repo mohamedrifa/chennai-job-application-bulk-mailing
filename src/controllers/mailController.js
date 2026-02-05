@@ -6,6 +6,7 @@ const DAILY_LIMIT = 500;
 
 exports.sendBulkMail = async (req, res) => {
   try {
+    // Emails and other data from frontend
     const { subject, message, userMail, userPass, emails } = req.body;
     const files = req.files;
 
@@ -18,7 +19,7 @@ exports.sendBulkMail = async (req, res) => {
       ? files.map(f => ({ filename: f.originalname, path: f.path }))
       : [];
 
-    // 🔥 IMMEDIATE RESPONSE
+    // 🔥 Immediate response
     res.json({
       success: true,
       message: "Bulk mail job started. Emails are being sent in the background.",
@@ -34,11 +35,12 @@ exports.sendBulkMail = async (req, res) => {
     let instantSuccess = 0;
     let instantFail = 0;
 
-    // Send first 500 instantly
+    // First batch of emails
     const firstBatch = emails.slice(0, DAILY_LIMIT);
     const remaining = emails.slice(DAILY_LIMIT);
 
-    for (const to of firstBatch) {
+    // Send first batch concurrently for speed
+    await Promise.all(firstBatch.map(async to => {
       try {
         await transporter.sendMail({
           from: userMail,
@@ -52,7 +54,9 @@ exports.sendBulkMail = async (req, res) => {
         instantFail++;
         console.error("Failed to send:", to, err.message);
       }
-    }
+    }));
+
+    console.log(`Instantly sent: ${instantSuccess}, failed: ${instantFail}`);
 
     // Queue remaining emails in DB
     if (remaining.length) {
@@ -70,15 +74,12 @@ exports.sendBulkMail = async (req, res) => {
       console.log(`Queued ${queueData.length} emails`);
     }
 
-    // Delete temp files
+    // Delete temporary files
     if (files) {
       files.forEach(f => fs.unlink(f.path, err => err && console.error(err)));
     }
 
-    // Send success/failure report to userMail
-    const totalSent = instantSuccess;
-    const totalFailed = instantFail + (remaining.length || 0);
-
+    // Send success/failure report to the sender
     await transporter.sendMail({
       from: userMail,
       to: userMail,
@@ -88,7 +89,7 @@ exports.sendBulkMail = async (req, res) => {
         <p><b>Sent Now:</b> ${instantSuccess}</p>
         <p><b>Failed Now:</b> ${instantFail}</p>
         <p><b>Queued:</b> ${remaining.length}</p>
-        <p><b>Total Attempts:</b> ${totalSent + totalFailed}</p>
+        <p><b>Total Attempts:</b> ${instantSuccess + instantFail + remaining.length}</p>
         <p><b>Time:</b> ${new Date().toLocaleString()}</p>
       `,
     });
