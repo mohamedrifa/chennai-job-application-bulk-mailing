@@ -13,6 +13,7 @@ cron.schedule("0 10 * * *", async () => {
   let failCount = 0;
 
   let mailId = "";
+  let pass = "";
 
   for (const mail of mails) {
     const transporter = nodemailer.createTransport({
@@ -23,6 +24,7 @@ cron.schedule("0 10 * * *", async () => {
       },
     });
     mailId = mail.userMail;
+    pass = mail.userPass;
 
     try {
       await transporter.sendMail({
@@ -49,8 +51,8 @@ cron.schedule("0 10 * * *", async () => {
   const adminTransporter = nodemailer.createTransport({
     service: "gmail",
     auth: {
-      user: process.env.REPORT_EMAIL,
-      pass: process.env.REPORT_PASS,
+      user: mailId,
+      pass: pass,
     },
   });
 

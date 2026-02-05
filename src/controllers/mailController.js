@@ -1,17 +1,17 @@
 const nodemailer = require("nodemailer");
 const fs = require("fs");
 const MailQueue = require("../models/mailQueue");
-const emails = require("../utils/tempmail.json");
 
 const DAILY_LIMIT = 500;
 
 exports.sendBulkMail = async (req, res) => {
   try {
-    const { subject, message, userMail, userPass } = req.body;
+    const { subject, message, userMail, userPass, emails } = req.body;
     const files = req.files;
 
-    if (!emails || !subject || !message || !userMail || !userPass) {
-      return res.status(400).json({ error: "Missing fields" });
+    // Validate input
+    if (!emails || !Array.isArray(emails) || !subject || !message || !userMail || !userPass) {
+      return res.status(400).json({ error: "Missing or invalid fields" });
     }
 
     const attachments = files
@@ -38,7 +38,6 @@ exports.sendBulkMail = async (req, res) => {
     const firstBatch = emails.slice(0, DAILY_LIMIT);
     const remaining = emails.slice(DAILY_LIMIT);
 
-    // Process first batch
     for (const to of firstBatch) {
       try {
         await transporter.sendMail({
@@ -55,21 +54,18 @@ exports.sendBulkMail = async (req, res) => {
       }
     }
 
-    console.log(`Instantly sent: ${instantSuccess}, failed: ${instantFail}`);
-
     // Queue remaining emails in DB
-    const queueData = remaining.map(to => ({
-      to,
-      subject,
-      message,
-      userMail,
-      userPass,
-      attachments,
-      status: "pending",
-      retries: 0,
-    }));
-
-    if (queueData.length) {
+    if (remaining.length) {
+      const queueData = remaining.map(to => ({
+        to,
+        subject,
+        message,
+        userMail,
+        userPass,
+        attachments,
+        status: "pending",
+        retries: 0,
+      }));
       await MailQueue.insertMany(queueData);
       console.log(`Queued ${queueData.length} emails`);
     }
@@ -78,6 +74,26 @@ exports.sendBulkMail = async (req, res) => {
     if (files) {
       files.forEach(f => fs.unlink(f.path, err => err && console.error(err)));
     }
+
+    // Send success/failure report to userMail
+    const totalSent = instantSuccess;
+    const totalFailed = instantFail + (remaining.length || 0);
+
+    await transporter.sendMail({
+      from: userMail,
+      to: userMail,
+      subject: "📊 Bulk Mail Report",
+      html: `
+        <h2>Bulk Mail Report</h2>
+        <p><b>Sent Now:</b> ${instantSuccess}</p>
+        <p><b>Failed Now:</b> ${instantFail}</p>
+        <p><b>Queued:</b> ${remaining.length}</p>
+        <p><b>Total Attempts:</b> ${totalSent + totalFailed}</p>
+        <p><b>Time:</b> ${new Date().toLocaleString()}</p>
+      `,
+    });
+
+    console.log("📧 Report mail sent");
 
   } catch (err) {
     console.error("Bulk mail failed:", err);
