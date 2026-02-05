@@ -5,7 +5,7 @@ const Settings = require("../models/settings");
 const { scheduleNextForUser } = require("../jobs/dailyMailer");
 
 
-const DAILY_LIMIT = 500;
+const DAILY_LIMIT = 450;
 
 exports.sendBulkMail = async (req, res) => {
   try {
@@ -43,11 +43,11 @@ exports.sendBulkMail = async (req, res) => {
     const remaining = emails.slice(DAILY_LIMIT);
 
     // Send first batch concurrently for speed
-    await Promise.all(firstBatch.map(async to => {
+    for (const mail of firstBatch) {
       try {
         await transporter.sendMail({
           from: userMail,
-          to,
+          to: mail,
           subject,
           html: message,
           attachments,
@@ -57,7 +57,7 @@ exports.sendBulkMail = async (req, res) => {
         instantFail++;
         console.error("Failed to send:", to, err.message);
       }
-    }));
+    }
 
     console.log(`Instantly sent: ${instantSuccess}, failed: ${instantFail}`);
 

@@ -3,7 +3,7 @@ const nodemailer = require("nodemailer");
 const MailQueue = require("../models/mailQueue");
 const Settings = require("../models/settings");
 
-const DAILY_LIMIT = 500;
+const DAILY_LIMIT = 450;
 
 const userTasks = new Map();
 
