@@ -59,6 +59,7 @@ exports.sendBulkMail = async (req, res) => {
       }
     }
 
+    
     console.log(`Instantly sent: ${instantSuccess}, failed: ${instantFail}`);
 
     let settings = await Settings.findOne({ userMail });
