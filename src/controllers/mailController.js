@@ -42,6 +42,21 @@ exports.sendBulkMail = async (req, res) => {
     const firstBatch = emails.slice(0, DAILY_LIMIT);
     const remaining = emails.slice(DAILY_LIMIT);
 
+    if (remaining.length) {
+      const queueData = remaining.map(to => ({
+        to,
+        subject,
+        message,
+        userMail,
+        userPass,
+        attachments,
+        status: "pending",
+        retries: 0,
+      }));
+      await MailQueue.insertMany(queueData);
+      console.log(`Queued ${queueData.length} emails`);
+    }
+
     // Send first batch concurrently for speed
     for (const mail of firstBatch) {
       try {
@@ -71,23 +86,6 @@ exports.sendBulkMail = async (req, res) => {
     }
     // start cron for this user immediately
     scheduleNextForUser(userMail);
-
-
-    // Queue remaining emails in DB
-    if (remaining.length) {
-      const queueData = remaining.map(to => ({
-        to,
-        subject,
-        message,
-        userMail,
-        userPass,
-        attachments,
-        status: "pending",
-        retries: 0,
-      }));
-      await MailQueue.insertMany(queueData);
-      console.log(`Queued ${queueData.length} emails`);
-    }
 
     // Delete temporary files
     if (files) {
