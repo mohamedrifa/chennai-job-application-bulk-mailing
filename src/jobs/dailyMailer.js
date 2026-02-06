@@ -4,12 +4,10 @@ const MailQueue = require("../models/mailQueue");
 const Settings = require("../models/settings");
 
 const DAILY_LIMIT = 450;
-
 const userTasks = new Map();
 
 async function scheduleNextForUser(userMail) {
 
-  // 🛑 stop old cron for this user
   if (userTasks.has(userMail)) {
     userTasks.get(userMail).stop();
   }
@@ -51,14 +49,14 @@ async function scheduleNextForUser(userMail) {
           attachments: mail.attachments,
         });
 
-        mail.status = "sent";
-        mail.sentAt = new Date();
+        // delete after success
+        await MailQueue.deleteOne({ _id: mail._id });
+
       } catch (err) {
         mail.retries++;
         mail.status = mail.retries >= 3 ? "failed" : "pending";
+        await mail.save();
       }
-
-      await mail.save();
     }
 
     await Settings.updateOne(
@@ -66,10 +64,9 @@ async function scheduleNextForUser(userMail) {
       { lastRun: new Date() }
     );
 
-    scheduleNextForUser(userMail); // shift again
+    scheduleNextForUser(userMail);
   });
 
-  // ✅ save task reference
   userTasks.set(userMail, task);
 }
 
