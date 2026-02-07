@@ -4,7 +4,29 @@ const MailQueue = require("../models/mailQueue");
 const Settings = require("../models/settings");
 
 const DAILY_LIMIT = 450;
+const MIN_DELAY = 40000;
+const MAX_DELAY = 90000;
+const MAX_RETRY = 3;
+
 const userTasks = new Map();
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function randDelay() {
+  return Math.floor(Math.random() * (MAX_DELAY - MIN_DELAY + 1)) + MIN_DELAY;
+}
+
+function spinContent(html) {
+  const variants = [
+    html,
+    html.replace("Hi", "Hello"),
+    html.replace("Regards", "Thanks"),
+    html + "<br><small>Sent automatically</small>"
+  ];
+  return variants[Math.floor(Math.random() * variants.length)];
+}
 
 async function scheduleNextForUser(userMail) {
 
@@ -12,50 +34,48 @@ async function scheduleNextForUser(userMail) {
     userTasks.get(userMail).stop();
   }
 
-  let data = await Settings.findOne({ userMail });
+  const data = await Settings.findOne({ userMail });
   if (!data) return;
 
   const lastRun = new Date(data.lastRun);
   const next = new Date(lastRun.getTime() + 25.5 * 60 * 60 * 1000);
 
-  const min = next.getMinutes();
-  const hr = next.getHours();
-  const cronExp = `${min} ${hr} * * *`;
-
-  console.log(`⏰ Next run for ${userMail}:`, cronExp);
+  const cronExp = `${next.getMinutes()} ${next.getHours()} * * *`;
 
   const task = cron.schedule(cronExp, async () => {
-    console.log(`📨 Running for ${userMail}`);
+    const pending = await MailQueue.find({
+      userMail,
+      status: "pending"
+    }).limit(DAILY_LIMIT);
 
-    const pendingMails = await MailQueue
-      .find({ userMail, status: "pending" })
-      .limit(DAILY_LIMIT);
+    if (!pending.length) return;
 
-    if (!pendingMails.length) return;
-
-    const userPass = pendingMails[0].userPass;
+    const userPass = pending[0].userPass;
     const transporter = nodemailer.createTransport({
       service: "gmail",
-      auth: { user: userMail, pass: userPass },
+      auth: { user: userMail, pass: userPass }
     });
 
-    for (const mail of pendingMails) {
+    for (const mail of pending) {
       try {
         await transporter.sendMail({
           from: mail.userMail,
           to: mail.to,
           subject: mail.subject,
-          html: mail.message,
-          attachments: mail.attachments,
+          html: spinContent(mail.message),
+          attachments: mail.attachments
         });
 
-        // delete after success
         await MailQueue.deleteOne({ _id: mail._id });
+        await sleep(randDelay());
 
       } catch (err) {
         mail.retries++;
-        mail.status = mail.retries >= 3 ? "failed" : "pending";
+        if (mail.retries >= MAX_RETRY) {
+          mail.status = "failed";
+        }
         await mail.save();
+        await sleep(180000);
       }
     }
 
@@ -76,4 +96,5 @@ async function startAllCrons() {
 }
 
 startAllCrons();
+
 module.exports = { scheduleNextForUser };

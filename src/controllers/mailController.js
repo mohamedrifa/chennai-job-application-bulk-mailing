@@ -5,50 +5,60 @@ const Settings = require("../models/settings");
 const { scheduleNextForUser } = require("../jobs/dailyMailer");
 
 const DAILY_LIMIT = 450;
+const MIN_DELAY = 40000; // 40 sec
+const MAX_DELAY = 90000; // 90 sec
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function randDelay() {
+  return Math.floor(Math.random() * (MAX_DELAY - MIN_DELAY + 1)) + MIN_DELAY;
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function spinContent(html) {
+  const variants = [
+    html,
+    html.replace("Hi", "Hello"),
+    html.replace("Regards", "Thanks"),
+    html + "<br><small>Sent automatically</small>"
+  ];
+  return variants[Math.floor(Math.random() * variants.length)];
+}
 
 exports.sendBulkMail = async (req, res) => {
   try {
     const { subject, message, userMail, userPass, emails } = req.body;
     const files = req.files || [];
 
-    if (
-      !Array.isArray(emails) ||
-      !emails.length ||
-      !subject ||
-      !message ||
-      !userMail ||
-      !userPass
-    ) {
-      return res.status(400).json({ error: "Missing or invalid fields" });
-    }
+    if (!Array.isArray(emails) || !emails.length)
+      return res.status(400).json({ error: "Invalid email list" });
+
+    const clean = emails.filter(isValidEmail);
 
     const attachments = files.map(f => ({
       filename: f.originalname,
       path: f.path,
     }));
 
-    // 🚀 Instant response
-    res.json({
-      success: true,
-      message: "Bulk mail job started in background",
-      total: emails.length,
-    });
+    res.json({ success: true, total: clean.length });
 
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: { user: userMail, pass: userPass },
     });
 
-    let success = 0;
-    let failed = 0;
+    let sent = 0, failed = 0;
 
-    // split
-    const nowBatch = emails.slice(0, DAILY_LIMIT);
-    const laterBatch = emails.slice(DAILY_LIMIT);
+    const now = clean.slice(0, DAILY_LIMIT);
+    const later = clean.slice(DAILY_LIMIT);
 
-    // Queue remaining
-    if (laterBatch.length) {
-      const bulkQueue = laterBatch.map(to => ({
+    if (later.length) {
+      await MailQueue.insertMany(later.map(to => ({
         to,
         subject,
         message,
@@ -56,62 +66,53 @@ exports.sendBulkMail = async (req, res) => {
         userPass,
         attachments,
         status: "pending",
-        retries: 0,
-      }));
-      await MailQueue.insertMany(bulkQueue);
+        retries: 0
+      })));
+
+      await Settings.updateOne(
+        { userMail },
+        { lastRun: new Date() },
+        { upsert: true }
+      );
+
+      scheduleNextForUser(userMail);
     }
 
-    // throttle sender
-    for (const to of nowBatch) {
+    for (const to of now) {
       try {
         await transporter.sendMail({
-          from: userMail,
+          from: `"${userMail}" <${userMail}>`,
           to,
           subject,
-          html: message,
-          attachments,
+          html: spinContent(message),
+          replyTo: userMail,
+          headers: {
+            "X-Mailer": "BulkMailer",
+            "Precedence": "bulk"
+          },
+          attachments
         });
-        success++;
-        await new Promise(r => setTimeout(r, 400)); // 2.5/sec
+
+        sent++;
+        await sleep(randDelay());
+
       } catch (err) {
         failed++;
         console.error("Send failed:", to, err.message);
+        await sleep(120000); // cooldown
       }
     }
 
-    console.log(`Now Sent: ${success}, Failed: ${failed}`);
-
-    // save last run
-    await Settings.findOneAndUpdate(
-      { userMail },
-      { $set: { lastRun: new Date() } },
-      { upsert: true }
-    );
-
-    // ⏰ start next cron
-    scheduleNextForUser(userMail);
-
-    // cleanup temp files
     files.forEach(f => fs.unlink(f.path, () => {}));
 
-    // 📊 report mail
     await transporter.sendMail({
       from: userMail,
       to: userMail,
       subject: "📊 Bulk Mail Report",
-      html: `
-        <h2>Bulk Mail Report</h2>
-        <p><b>Sent:</b> ${success}</p>
-        <p><b>Failed:</b> ${failed}</p>
-        <p><b>Queued:</b> ${laterBatch.length}</p>
-        <p><b>Total:</b> ${emails.length}</p>
-        <p><b>Time:</b> ${new Date().toLocaleString()}</p>
-      `,
+      html: `<b>Sent:</b> ${sent}<br><b>Failed:</b> ${failed}`
     });
 
-    console.log("📧 Report sent");
-
   } catch (err) {
-    console.error("Bulk mail fatal error:", err.message);
+    console.error("Fatal:", err.message);
   }
 };
