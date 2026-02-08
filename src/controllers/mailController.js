@@ -5,8 +5,8 @@ const Settings = require("../models/settings");
 const { scheduleNextForUser } = require("../jobs/dailyMailer");
 
 const DAILY_LIMIT = 450;
-const MIN_DELAY = 40000; // 40 sec
-const MAX_DELAY = 90000; // 90 sec
+const MIN_DELAY = 500;
+const MAX_DELAY = 1000;
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
@@ -89,7 +89,7 @@ exports.sendBulkMail = async (req, res) => {
       } catch (err) {
         failed++;
         console.error("Send failed:", to, err.message);
-        await sleep(120000); // cooldown
+        await sleep(randDelay()); // cooldown
       }
     }
 

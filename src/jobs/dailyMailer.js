@@ -4,8 +4,8 @@ const MailQueue = require("../models/mailQueue");
 const Settings = require("../models/settings");
 
 const DAILY_LIMIT = 450;
-const MIN_DELAY = 40000;
-const MAX_DELAY = 90000;
+const MIN_DELAY = 500;
+const MAX_DELAY = 1000;
 const MAX_RETRY = 3;
 
 const userTasks = new Map();
@@ -65,7 +65,7 @@ async function scheduleNextForUser(userMail) {
           mail.status = "failed";
         }
         await mail.save();
-        await sleep(180000);
+        await sleep(randDelay());
       }
     }
 
