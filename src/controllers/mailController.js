@@ -5,8 +5,10 @@ const Settings = require("../models/settings");
 const { scheduleNextForUser } = require("../jobs/dailyMailer");
 
 const DAILY_LIMIT = 450;
-const MIN_DELAY = 500;
-const MAX_DELAY = 1000;
+
+// SAFE GMAIL DELAYS
+const MIN_DELAY = 40000; // 40 sec
+const MAX_DELAY = 90000; // 90 sec
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
@@ -14,6 +16,15 @@ function sleep(ms) {
 
 function randDelay() {
   return Math.floor(Math.random() * (MAX_DELAY - MIN_DELAY + 1)) + MIN_DELAY;
+}
+
+function withTimeout(promise, ms = 30000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("SMTP Timeout")), ms)
+    ),
+  ]);
 }
 
 function isValidEmail(email) {
@@ -37,12 +48,12 @@ exports.sendBulkMail = async (req, res) => {
 
     res.json({ success: true, total: clean.length });
 
-    const transporter = nodemailer.createTransport({
+    let transporter = nodemailer.createTransport({
       service: "gmail",
       auth: { user: userMail, pass: userPass },
     });
 
-    let sent = 0, failed = 0;
+    let sent = 0, failed = 0, count = 0;
 
     const now = clean.slice(0, DAILY_LIMIT);
     const later = clean.slice(DAILY_LIMIT);
@@ -70,27 +81,41 @@ exports.sendBulkMail = async (req, res) => {
 
     for (const to of now) {
       try {
-        await transporter.sendMail({
-          from: `"${userMail}" <${userMail}>`,
-          to,
-          subject,
-          html: message,
-          replyTo: userMail,
-          headers: {
-            "X-Mailer": "BulkMailer",
-            "Precedence": "bulk"
-          },
-          attachments
-        });
+        count++;
+
+        // reset SMTP every 50 mails
+        if (count % 50 === 0) {
+          transporter.close();
+          await sleep(15000);
+          transporter = nodemailer.createTransport({
+            service: "gmail",
+            auth: { user: userMail, pass: userPass },
+          });
+        }
+
+        await withTimeout(
+          transporter.sendMail({
+            from: `"${userMail}" <${userMail}>`,
+            to,
+            subject,
+            html: message,
+            replyTo: userMail,
+            headers: {
+              "X-Mailer": "BulkMailer",
+              "Precedence": "bulk"
+            },
+            attachments
+          }),
+          30000
+        );
 
         sent++;
-        await sleep(randDelay());
-
       } catch (err) {
         failed++;
         console.error("Send failed:", to, err.message);
-        await sleep(randDelay()); // cooldown
       }
+
+      await sleep(randDelay());
     }
 
     files.forEach(f => fs.unlink(f.path, () => {}));
