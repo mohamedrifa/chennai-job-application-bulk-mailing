@@ -7,8 +7,8 @@ const { scheduleNextForUser } = require("../jobs/dailyMailer");
 const DAILY_LIMIT = 450;
 
 // SAFE GMAIL DELAYS
-const MIN_DELAY = 40000; // 40 sec
-const MAX_DELAY = 90000; // 90 sec
+const MIN_DELAY = 500; // 40 sec
+const MAX_DELAY = 1000; // 90 sec
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
