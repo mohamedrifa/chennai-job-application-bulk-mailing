@@ -124,7 +124,7 @@ exports.sendBulkMail = async (req, res) => {
       from: userMail,
       to: userMail,
       subject: "📊 Bulk Mail Report",
-      html: `<b>Sent:</b> ${sent}<br><b>Failed:</b> ${failed}`
+      html: `<b>Sent:</b> ${sent}<br><b>Failed:</b> ${failed}<br><b>Queued:</b> ${later.length || 0}`
     });
 
   } catch (err) {
