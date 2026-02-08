@@ -20,16 +20,6 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function spinContent(html) {
-  const variants = [
-    html,
-    html.replace("Hi", "Hello"),
-    html.replace("Regards", "Thanks"),
-    html + "<br><small>Sent automatically</small>"
-  ];
-  return variants[Math.floor(Math.random() * variants.length)];
-}
-
 exports.sendBulkMail = async (req, res) => {
   try {
     const { subject, message, userMail, userPass, emails } = req.body;
@@ -84,7 +74,7 @@ exports.sendBulkMail = async (req, res) => {
           from: `"${userMail}" <${userMail}>`,
           to,
           subject,
-          html: spinContent(message),
+          html: message,
           replyTo: userMail,
           headers: {
             "X-Mailer": "BulkMailer",

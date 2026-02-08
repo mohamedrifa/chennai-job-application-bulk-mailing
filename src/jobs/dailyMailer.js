@@ -18,16 +18,6 @@ function randDelay() {
   return Math.floor(Math.random() * (MAX_DELAY - MIN_DELAY + 1)) + MIN_DELAY;
 }
 
-function spinContent(html) {
-  const variants = [
-    html,
-    html.replace("Hi", "Hello"),
-    html.replace("Regards", "Thanks"),
-    html + "<br><small>Sent automatically</small>"
-  ];
-  return variants[Math.floor(Math.random() * variants.length)];
-}
-
 async function scheduleNextForUser(userMail) {
 
   if (userTasks.has(userMail)) {
@@ -62,7 +52,7 @@ async function scheduleNextForUser(userMail) {
           from: mail.userMail,
           to: mail.to,
           subject: mail.subject,
-          html: spinContent(mail.message),
+          html: mail.message,
           attachments: mail.attachments
         });
 
