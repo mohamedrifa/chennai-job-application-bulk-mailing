@@ -4,7 +4,6 @@ const express = require("express");
 const cors = require("cors");
 
 const mailRoutes = require("./routes/mailRoutes");
-require("./jobs/dailyMailer"); // <-- add this line
 
 const app = express();
 
@@ -22,8 +21,12 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use("/api/mail", mailRoutes);
 
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
-  .catch(err => console.log(err));
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT} version 5`));
+  .then(() => {
+    console.log("✅ MongoDB connected");
+    require("./jobs/dailyMailer");
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, () =>
+      console.log(`🚀 Server running on port ${PORT}`)
+    );
+  })
+  .catch(err => console.log("❌ Mongo Error:", err));
