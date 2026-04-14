@@ -6,16 +6,12 @@ const { scheduleNextForUser } = require("../jobs/dailyMailer");
 
 const DAILY_LIMIT = 450;
 
-// SAFE GMAIL DELAYS
-const MIN_DELAY = 500; // 40 sec
-const MAX_DELAY = 1000; // 90 sec
+// ⚡ FAST CONFIG
+const BATCH_SIZE = 3;
+const BATCH_DELAY = 3000;
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
-}
-
-function randDelay() {
-  return Math.floor(Math.random() * (MAX_DELAY - MIN_DELAY + 1)) + MIN_DELAY;
 }
 
 function withTimeout(promise, ms = 30000) {
@@ -48,16 +44,17 @@ exports.sendBulkMail = async (req, res) => {
 
     res.json({ success: true, total: clean.length });
 
-    let transporter = nodemailer.createTransport({
+    const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: { user: userMail, pass: userPass },
     });
 
-    let sent = 0, failed = 0, count = 0;
+    let sent = 0, failed = 0;
 
     const now = clean.slice(0, DAILY_LIMIT);
     const later = clean.slice(DAILY_LIMIT);
 
+    // 📌 Queue extra
     if (later.length) {
       await MailQueue.insertMany(later.map(to => ({
         to,
@@ -79,47 +76,38 @@ exports.sendBulkMail = async (req, res) => {
       scheduleNextForUser(userMail);
     }
 
-    for (const to of now) {
-      try {
-        count++;
+    // 🚀 BATCH SEND NOW
+    for (let i = 0; i < now.length; i += BATCH_SIZE) {
+      const batch = now.slice(i, i + BATCH_SIZE);
 
-        // reset SMTP every 50 mails
-        if (count % 50 === 0) {
-          transporter.close();
-          await sleep(15000);
-          transporter = nodemailer.createTransport({
-            service: "gmail",
-            auth: { user: userMail, pass: userPass },
-          });
-        }
+      await Promise.all(
+        batch.map(async (to) => {
+          try {
+            await withTimeout(
+              transporter.sendMail({
+                from: `"${userMail}" <${userMail}>`,
+                to,
+                subject,
+                html: message,
+                attachments
+              }),
+              30000
+            );
+            sent++;
+          } catch (err) {
+            failed++;
+            console.error("Send failed:", to, err.message);
+          }
+        })
+      );
 
-        await withTimeout(
-          transporter.sendMail({
-            from: `"${userMail}" <${userMail}>`,
-            to,
-            subject,
-            html: message,
-            replyTo: userMail,
-            headers: {
-              "X-Mailer": "BulkMailer",
-              "Precedence": "bulk"
-            },
-            attachments
-          }),
-          30000
-        );
-
-        sent++;
-      } catch (err) {
-        failed++;
-        console.error("Send failed:", to, err.message);
-      }
-
-      await sleep(randDelay());
+      await sleep(BATCH_DELAY);
     }
 
+    // 🧹 cleanup temp files
     files.forEach(f => fs.unlink(f.path, () => {}));
 
+    // 📊 report
     await transporter.sendMail({
       from: userMail,
       to: userMail,

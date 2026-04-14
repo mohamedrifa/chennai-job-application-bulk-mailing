@@ -14,3 +14,4 @@ const mailSchema = new mongoose.Schema({
 });
 
 module.exports = mongoose.model("MailQueue", mailSchema);
+
