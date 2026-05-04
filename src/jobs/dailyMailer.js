@@ -4,8 +4,6 @@ const Settings = require("../models/settings");
 
 const DAILY_LIMIT = 450;
 const MAX_RETRY = 3;
-
-// ⚡ FAST CONFIG
 const BATCH_SIZE = 3;
 const BATCH_DELAY = 3000;
 
@@ -37,32 +35,29 @@ async function scheduleNextForUser(userMail) {
     const next = new Date(lastRun.getTime() + 25.5 * 60 * 60 * 1000);
     const delay = next.getTime() - Date.now();
 
-    console.log(`⏳ Next run for ${userMail} in ${Math.round(delay / 1000)} sec`);
+    console.log(`⏳ Next run for ${userMail} in ${Math.round(delay / 1000)}s`);
 
     const timer = setTimeout(async () => {
       try {
         const pending = await MailQueue.find({
           userMail,
-          status: "pending"
+          status: "pending",
         }).limit(DAILY_LIMIT);
 
         if (!pending.length) {
-          console.log("No pending mails");
+          console.log(`No pending mails for ${userMail}`);
           return scheduleNextForUser(userMail);
         }
 
         const transporter = nodemailer.createTransport({
           service: "gmail",
-          auth: { user: userMail, pass: pending[0].userPass }
+          auth: { user: userMail, pass: pending[0].userPass },
         });
 
-        let sent = 0;
-        let failed = 0;
+        let sent = 0, failed = 0;
 
-        // 🚀 BATCH SENDING
         for (let i = 0; i < pending.length; i += BATCH_SIZE) {
           const batch = pending.slice(i, i + BATCH_SIZE);
-
           await Promise.all(
             batch.map(async (mail) => {
               try {
@@ -72,83 +67,72 @@ async function scheduleNextForUser(userMail) {
                     to: mail.to,
                     subject: mail.subject,
                     html: mail.message,
-                    attachments: mail.attachments
+                    attachments: mail.attachments,
                   }),
                   30000
                 );
-
                 mail.status = "sent";
                 mail.sentAt = new Date();
                 await mail.save();
-
                 sent++;
-
               } catch (err) {
                 failed++;
                 mail.retries++;
-
                 if (mail.retries >= MAX_RETRY) {
                   mail.status = "failed";
                 }
-
                 await mail.save();
+                console.error("Queue send failed:", mail.to, err.message);
               }
             })
           );
-
           await sleep(BATCH_DELAY);
         }
 
         const remaining = await MailQueue.countDocuments({
           userMail,
-          status: "pending"
+          status: "pending",
         });
 
-        // 📊 REPORT
         try {
           await transporter.sendMail({
             from: userMail,
             to: userMail,
             subject: "📊 Bulk Mail Report",
-            html: `<b>Sent:</b> ${sent}<br><b>Failed:</b> ${failed}<br><b>Remaining:</b> ${remaining}`
+            html: `<b>Sent:</b> ${sent}<br><b>Failed:</b> ${failed}<br><b>Remaining:</b> ${remaining}`,
           });
         } catch (e) {
           console.error("Report mail failed:", e.message);
         }
 
-        // 🧹 AUTO CLEANUP (2 days old)
         await MailQueue.deleteMany({
           status: "sent",
-          sentAt: { $lt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) }
+          sentAt: { $lt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) },
         });
 
-        // update last run
-        await Settings.updateOne(
-          { userMail },
-          { lastRun: new Date() }
-        );
+        await Settings.updateOne({ userMail }, { lastRun: new Date() });
 
         scheduleNextForUser(userMail);
-
       } catch (err) {
-        console.error("Scheduler error:", err.message);
+        console.error("Scheduler run error:", err.message);
         scheduleNextForUser(userMail);
       }
     }, Math.max(delay, 0));
 
     userTasks.set(userMail, timer);
-
   } catch (err) {
-    console.error("Schedule error:", err.message);
+    console.error("Schedule setup error:", err.message);
   }
 }
 
-// 🔁 Start all
 async function startAllSchedulers() {
-  const users = await Settings.find({});
-  users.forEach(u => scheduleNextForUser(u.userMail));
+  try {
+    const users = await Settings.find({});
+    console.log(`🔁 Starting schedulers for ${users.length} user(s)`);
+    users.forEach(u => scheduleNextForUser(u.userMail));
+  } catch (err) {
+    console.error("startAllSchedulers error:", err.message);
+  }
 }
 
-startAllSchedulers();
-
-module.exports = { scheduleNextForUser };
+module.exports = { scheduleNextForUser, startAllSchedulers };
